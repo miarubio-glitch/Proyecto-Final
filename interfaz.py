@@ -1,344 +1,205 @@
-"""Interfaz del programa."""
 import tkinter as tk
-from tkinter import messagebox, simpledialog
-
-from datos import alumnos, materias
-from alumnos import (
-    registrar_alumno,
-    agregar_materia_alumno,
-    eliminar_materia_alumno
+from tkinter import messagebox
+from datos import MATERIAS_CREDITOS, cargar_alumnos, guardar_alumnos
+from logica import (
+    validar_id_nuevo,
+    validar_materias_seleccionadas,
+    buscar_alumno,
+    eliminar_alumno,
+    calcular_promedio_ponderado,
 )
-from materias import (
-    agregar_materia,
-    eliminar_materia,
-    cambiar_creditos
-)
-from promedios import calcular_promedio
 
 
-def iniciar():
-    """Crea la pantalla de inicio."""
-    ventana = tk.Tk()
-    ventana.title("Los Tuntunsitos")
-    ventana.geometry("470x510")
-    ventana.configure(bg="#EAF0F6")
-    ventana.resizable(False, False)
+class AppPonderador:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("Ponderador Académico")
+        self.root.geometry("400x460")
+        self.alumnos = cargar_alumnos()
+        self._construir_menu_principal()
 
-    # --------------------------------
-    # FUNCIONES DE LA INTERFAZ
-    # --------------------------------
+    def _construir_menu_principal(self):
+        tk.Label(self.root, text="Sistema de Promedio Ponderado", font=("Arial", 12, "bold")).pack(pady=15)
 
-    def mostrar_promedio():
+        marco = tk.Frame(self.root, bg="light blue", padx=25, pady=20)
+        marco.pack(padx=20, pady=10, fill="both", expand=True)
 
-        id_a = simpledialog.askinteger(
-            "Promedio",
-            "Ingrese el ID del alumno:",
-            parent=ventana
+        botones = [
+            ("1. Registrar alumno", self.abrir_registro_id),
+            ("2. Calcular promedio ponderado", self.abrir_selector_alumno),
+            ("3. Eliminar registro por ID", self.abrir_eliminar_alumno),
+            ("4. Resetear registros", self.resetear_datos),
+            ("5. Salir", self.salir),
+        ]
+        for texto, accion in botones:
+            tk.Button(marco, text=texto, width=28, command=accion).pack(pady=9)
+
+    def abrir_registro_id(self):
+        ventana_id = tk.Toplevel(self.root)
+        ventana_id.title("Registrar ID")
+        ventana_id.geometry("360x150")
+
+        marco = tk.Frame(ventana_id, bg="light blue", padx=20, pady=20)
+        marco.pack(fill="both", expand=True)
+
+        tk.Label(marco, text="ID del alumno:", bg="light blue").grid(row=0, column=0, padx=5, pady=10)
+        entrada_id = tk.Entry(marco, width=20)
+        entrada_id.grid(row=0, column=1, padx=5, pady=10)
+        entrada_id.focus()
+
+        def continuar(event=None):
+            try:
+                id_valido = validar_id_nuevo(entrada_id.get(), self.alumnos)
+            except ValueError as error:
+                messagebox.showerror("ID inválido", str(error), parent=ventana_id)
+                return
+            ventana_id.destroy()
+            self._abrir_seleccion_materias(id_valido)
+
+        entrada_id.bind("<Return>", continuar)
+        tk.Button(marco, text="Continuar", command=continuar).grid(row=1, column=0, columnspan=2, pady=10)
+
+    def _abrir_seleccion_materias(self, id_alumno: str):
+        ventana_mat = tk.Toplevel(self.root)
+        ventana_mat.title(f"Materias - {id_alumno}")
+        ventana_mat.geometry("420x420")
+
+        marco = tk.Frame(ventana_mat, bg="light blue", padx=20, pady=15)
+        marco.pack(fill="both", expand=True)
+
+        tk.Label(marco, text="Selecciona las materias cursadas:", bg="light blue", font=("Arial", 10, "bold")).pack(
+            anchor="w", pady=(0, 10)
         )
 
-        if id_a is None:
-            return
+        checks = {}
+        for materia, creditos in MATERIAS_CREDITOS.items():
+            var = tk.BooleanVar(value=False)
+            checks[materia] = var
+            tk.Checkbutton(
+                marco,
+                text=f"{materia} ({creditos} créd.)",
+                variable=var,
+                bg="light blue",
+            ).pack(anchor="w", pady=3)
 
-        if id_a not in alumnos:
-            messagebox.showerror(
-                "Error", "Alumno no registrado"
-            )
-            return
-
-        calificaciones = {}
-
-        for m in alumnos[id_a]:
-
-            if m not in materias:
-                continue
-
-            nota = simpledialog.askfloat(
-                "Calificación",
-                f"Ingrese el promedio de {m}:",
-                minvalue=0,
-                maxvalue=10,
-                parent=ventana
-            )
-
-            if nota is None:
+        def guardar():
+            seleccionadas = [m for m, var in checks.items() if var.get()]
+            try:
+                validar_materias_seleccionadas(seleccionadas)
+            except ValueError as error:
+                messagebox.showerror("Selección inválida", str(error), parent=ventana_mat)
                 return
 
-            calificaciones[m] = nota
+            self.alumnos[id_alumno] = seleccionadas
+            guardar_alumnos(self.alumnos)
+            ventana_mat.destroy()
+            messagebox.showinfo("Guardado", f"Alumno '{id_alumno}' registrado con {len(seleccionadas)} materias.")
 
-        resultado = calcular_promedio(
-            id_a, calificaciones
+        tk.Button(marco, text="Guardar materias", command=guardar).pack(pady=15)
+
+    def abrir_selector_alumno(self):
+        if not self.alumnos:
+            messagebox.showwarning("Sin registros", "Primero debes registrar al menos un alumno.")
+            return
+
+        ventana_sel = tk.Toplevel(self.root)
+        ventana_sel.title("Seleccionar Alumno")
+        ventana_sel.geometry("340x360")
+
+        marco = tk.Frame(ventana_sel, bg="light blue", padx=20, pady=20)
+        marco.pack(fill="both", expand=True)
+
+        tk.Label(marco, text="Elige un alumno:", bg="light blue", font=("Arial", 10, "bold")).pack(pady=(0, 10))
+
+        for id_alumno in self.alumnos:
+            tk.Button(
+                marco,
+                text=id_alumno,
+                width=22,
+                command=lambda aid=id_alumno: self._abrir_captura_calificaciones(ventana_sel, aid),
+            ).pack(pady=5)
+
+    def _abrir_captura_calificaciones(self, ventana_anterior: tk.Toplevel, id_alumno: str):
+        ventana_anterior.destroy()
+        ventana_cal = tk.Toplevel(self.root)
+        ventana_cal.title(f"Calificaciones - {id_alumno}")
+        ventana_cal.geometry("460x400")
+
+        marco = tk.Frame(ventana_cal, bg="light blue", padx=20, pady=20)
+        marco.pack(fill="both", expand=True)
+
+        tk.Label(marco, text="Ingresa las calificaciones (0 a 10):", bg="light blue", font=("Arial", 10, "bold")).grid(
+            row=0, column=0, columnspan=2, pady=(0, 15)
         )
 
-        if resultado is not None:
-            messagebox.showinfo(
-                "Resultado",
-                f"Tu promedio ponderado es: {resultado:.2f}"
-            )
-        else:
-            messagebox.showerror(
-                "Error",
-                "No se pudo calcular el promedio"
-            )
+        entradas = {}
+        for fila, materia in enumerate(self.alumnos[id_alumno], start=1):
+            tk.Label(marco, text=materia, bg="light blue").grid(row=fila, column=0, sticky="w", padx=10, pady=6)
+            caja = tk.Entry(marco, width=8)
+            caja.grid(row=fila, column=1, padx=10, pady=6)
+            entradas[materia] = caja
 
-    def registrar():
+        def procesar():
+            datos_capturados = {mat: caja.get() for mat, caja in entradas.items()}
+            try:
+                promedio = calcular_promedio_ponderado(datos_capturados)
+            except ValueError as error:
+                messagebox.showerror("Dato inválido", str(error), parent=ventana_cal)
+                return
 
-        id_a = simpledialog.askinteger(
-            "Registrar alumno",
-            "Ingrese el ID del alumno:",
-            parent=ventana
+            messagebox.showinfo("Resultado", f"El promedio ponderado de {id_alumno} es: {promedio}", parent=ventana_cal)
+
+        tk.Button(marco, text="Calcular Promedio", command=procesar).grid(
+            row=len(entradas) + 1, column=0, columnspan=2, pady=15
         )
 
-        if id_a is None:
+    def abrir_eliminar_alumno(self):
+        if not self.alumnos:
+            messagebox.showwarning("Sin registros", "No hay alumnos registrados para eliminar.")
             return
 
-        if registrar_alumno(id_a):
-            messagebox.showinfo(
-                "Registro",
-                "Alumno registrado correctamente"
-            )
-        else:
-            messagebox.showwarning(
-                "Aviso",
-                "El alumno ya está registrado"
-            )
+        ventana_del = tk.Toplevel(self.root)
+        ventana_del.title("Eliminar Registro")
+        ventana_del.geometry("380x160")
 
-    def administrar_catalogo():
+        marco = tk.Frame(ventana_del, bg="light blue", padx=20, pady=20)
+        marco.pack(fill="both", expand=True)
 
-        opcion = simpledialog.askinteger(
-            "Materias",
-            "1. Agregar materia\n"
-            "2. Eliminar materia\n"
-            "3. Cambiar créditos\n\n"
-            "Seleccione una opción:",
-            minvalue=1,
-            maxvalue=3,
-            parent=ventana
+        tk.Label(marco, text="ID a eliminar:", bg="light blue").grid(row=0, column=0, padx=5, pady=10)
+        entrada_id = tk.Entry(marco, width=22)
+        entrada_id.grid(row=0, column=1, padx=5, pady=10)
+        entrada_id.focus()
+
+        def buscar_y_eliminar(event=None):
+            try:
+                id_encontrado, materias = buscar_alumno(entrada_id.get(), self.alumnos)
+            except ValueError as error:
+                messagebox.showerror("Búsqueda sin resultados", str(error), parent=ventana_del)
+                return
+
+            lista_materias = ", ".join(materias)
+            confirmado = messagebox.askyesno(
+                "Confirmar eliminación",
+                f"¿Eliminar el registro del alumno '{id_encontrado}'?\n\nMaterias inscritas: {lista_materias}",
+                parent=ventana_del,
+            )
+            if confirmado:
+                eliminar_alumno(id_encontrado, self.alumnos)
+                guardar_alumnos(self.alumnos)
+                ventana_del.destroy()
+                messagebox.showinfo("Registro eliminado", f"El alumno '{id_encontrado}' fue eliminado correctamente.")
+
+        entrada_id.bind("<Return>", buscar_y_eliminar)
+        tk.Button(marco, text="Buscar y eliminar", command=buscar_y_eliminar).grid(
+            row=1, column=0, columnspan=2, pady=10
         )
 
-        if opcion is None:
-            return
+    def resetear_datos(self):
+        if messagebox.askyesno("Confirmar", "¿Seguro que deseas eliminar todos los alumnos registrados?"):
+            self.alumnos.clear()
+            guardar_alumnos(self.alumnos)
+            messagebox.showinfo("Reseteo", "Todos los registros han sido eliminados.")
 
-        if opcion == 1:
-
-            nombre = simpledialog.askstring(
-                "Agregar",
-                "Nombre de la materia:",
-                parent=ventana
-            )
-
-            if nombre is None:
-                return
-
-            nombre = nombre.strip().title()
-
-            if not nombre:
-                return
-
-            credito = simpledialog.askinteger(
-                "Créditos",
-                "Ingrese los créditos:",
-                minvalue=1,
-                parent=ventana
-            )
-
-            if credito is None:
-                return
-
-            mensaje = agregar_materia(nombre, credito)
-
-        elif opcion == 2:
-
-            nombre = simpledialog.askstring(
-                "Eliminar",
-                "Ingrese el nombre exacto de la materia:",
-                parent=ventana
-            )
-
-            if nombre is None:
-                return
-
-            mensaje = eliminar_materia(nombre.strip())
-
-        else:
-
-            nombre = simpledialog.askstring(
-                "Créditos",
-                "Ingrese el nombre exacto de la materia:",
-                parent=ventana
-            )
-
-            if nombre is None:
-                return
-
-            credito = simpledialog.askinteger(
-                "Créditos",
-                "Ingrese los nuevos créditos:",
-                minvalue=1,
-                parent=ventana
-            )
-
-            if credito is None:
-                return
-
-            mensaje = cambiar_creditos(
-                nombre.strip(), credito
-            )
-
-        messagebox.showinfo("Resultado", mensaje)
-
-    def administrar_alumno():
-
-        id_a = simpledialog.askinteger(
-            "Alumno",
-            "Ingrese el ID del alumno:",
-            parent=ventana
-        )
-
-        if id_a is None:
-            return
-
-        if id_a not in alumnos:
-            messagebox.showerror(
-                "Error", "Alumno no registrado"
-            )
-            return
-
-        opcion = simpledialog.askinteger(
-            "Materias del alumno",
-            "1. Agregar materia\n"
-            "2. Eliminar materia\n\n"
-            "Seleccione una opción:",
-            minvalue=1,
-            maxvalue=2,
-            parent=ventana
-        )
-
-        if opcion is None:
-            return
-
-        if opcion == 1:
-
-            nombre = simpledialog.askstring(
-                "Inscribir",
-                "Materias disponibles:\n" +
-                "\n".join(materias.keys()) +
-                "\n\nIngrese el nombre exacto:",
-                parent=ventana
-            )
-
-            if nombre is None:
-                return
-
-            mensaje = agregar_materia_alumno(
-                id_a, nombre.strip()
-            )
-
-        else:
-
-            nombre = simpledialog.askstring(
-                "Eliminar",
-                "Materias inscritas:\n" +
-                "\n".join(alumnos[id_a]) +
-                "\n\nIngrese el nombre exacto:",
-                parent=ventana
-            )
-
-            if nombre is None:
-                return
-
-            mensaje = eliminar_materia_alumno(
-                id_a, nombre.strip()
-            )
-
-        messagebox.showinfo("Resultado", mensaje)
-
-    def mostrar_informacion():
-
-        texto = "MATERIAS DISPONIBLES\n\n"
-
-        for m, c in materias.items():
-            texto += f"{m}: {c} créditos\n"
-
-        texto += "\nALUMNOS REGISTRADOS\n\n"
-
-        for id_a, lista in alumnos.items():
-            texto += f"ID: {id_a}\n"
-
-            for m in lista:
-                texto += f"- {m}\n"
-
-            texto += "\n"
-
-        messagebox.showinfo(
-            "Información",
-            texto
-        )
-
-    # --------------------------------
-    # DISEÑO DE LA VENTANA
-    # --------------------------------
-
-    titulo = tk.Label(
-        ventana,
-        text="LOS TUNTUNSITOS",
-        font=("Arial", 22, "bold"),
-        bg="#243B53",
-        fg="white",
-        pady=20
-    )
-    titulo.pack(fill="x")
-
-    subtitulo = tk.Label(
-        ventana,
-        text="Sistema de control académico",
-        font=("Arial", 11),
-        bg="#EAF0F6",
-        fg="#243B53"
-    )
-    subtitulo.pack(pady=15)
-
-    def crear_boton(texto, funcion):
-
-        tk.Button(
-            ventana,
-            text=texto,
-            command=funcion,
-            font=("Arial", 10, "bold"),
-            bg="#334E68",
-            fg="white",
-            width=38,
-            height=2,
-            cursor="hand2"
-        ).pack(pady=5)
-
-    crear_boton(
-        "1. Mostrar promedio ponderado",
-        mostrar_promedio
-    )
-
-    crear_boton(
-        "2. Registrar alumno",
-        registrar
-    )
-
-    crear_boton(
-        "3. Modificar materias",
-        administrar_catalogo
-    )
-
-    crear_boton(
-        "4. Agregar / Eliminar materias del alumno",
-        administrar_alumno
-    )
-
-    crear_boton(
-        "5. Mostrar información del sistema",
-        mostrar_informacion
-    )
-
-    crear_boton(
-        "6. Salir",
-        ventana.destroy
-    )
-
-    ventana.mainloop()
+    def salir(self):
+        messagebox.showinfo("Hasta luego", "Gracias por usar el sistema.")
+        self.root.destroy()
